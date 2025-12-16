@@ -1,0 +1,4 @@
+langchain-anthropic>=1.2.0
+langchain-mcp-adapters>=0.1.14
+langgraph>=1.0.4
+python-dotenv>=1.2.1
