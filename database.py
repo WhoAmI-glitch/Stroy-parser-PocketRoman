@@ -73,9 +73,18 @@ def create_tables():
     """Create all required tables if they don't exist"""
     with get_connection() as conn:
         with conn.cursor() as cur:
+            # Drop existing tables to recreate with new schema
+            # This is safe because the database is empty
+            cur.execute("DROP TABLE IF EXISTS search_results CASCADE")
+            cur.execute("DROP TABLE IF EXISTS searches CASCADE")
+            cur.execute("DROP TABLE IF EXISTS companies CASCADE")
+            cur.execute("DROP TABLE IF EXISTS cities CASCADE")
+            cur.execute("DROP TABLE IF EXISTS scraping_progress CASCADE")
+            cur.execute("DROP TABLE IF EXISTS users CASCADE")
+
             # Companies table
             cur.execute("""
-                CREATE TABLE IF NOT EXISTS companies (
+                CREATE TABLE companies (
                     id SERIAL PRIMARY KEY,
                     название_компании TEXT,
                     телефон TEXT,
@@ -100,7 +109,7 @@ def create_tables():
             
             # Searches table for tracking search history
             cur.execute("""
-                CREATE TABLE IF NOT EXISTS searches (
+                CREATE TABLE searches (
                     id SERIAL PRIMARY KEY,
                     query TEXT NOT NULL,
                     city TEXT,
@@ -115,7 +124,7 @@ def create_tables():
             
             # Search results linking table
             cur.execute("""
-                CREATE TABLE IF NOT EXISTS search_results (
+                CREATE TABLE search_results (
                     search_id INTEGER REFERENCES searches(id) ON DELETE CASCADE,
                     company_id INTEGER REFERENCES companies(id) ON DELETE CASCADE,
                     rank INTEGER,
@@ -125,7 +134,7 @@ def create_tables():
             
             # Cities table
             cur.execute("""
-                CREATE TABLE IF NOT EXISTS cities (
+                CREATE TABLE cities (
                     id SERIAL PRIMARY KEY,
                     name TEXT UNIQUE NOT NULL,
                     ring INTEGER,
@@ -135,7 +144,7 @@ def create_tables():
             
             # Scraping progress table
             cur.execute("""
-                CREATE TABLE IF NOT EXISTS scraping_progress (
+                CREATE TABLE scraping_progress (
                     id SERIAL PRIMARY KEY,
                     city TEXT,
                     status TEXT,
@@ -147,7 +156,7 @@ def create_tables():
             
             # Users table
             cur.execute("""
-                CREATE TABLE IF NOT EXISTS users (
+                CREATE TABLE users (
                     id SERIAL PRIMARY KEY,
                     username TEXT UNIQUE NOT NULL,
                     password_hash TEXT NOT NULL,
