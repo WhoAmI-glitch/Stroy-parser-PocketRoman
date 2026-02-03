@@ -3,7 +3,7 @@ fastapi==0.109.0
 uvicorn[standard]>=0.31.1
 
 # Database
-psycopg2-binary==2.9.9
+psycopg2-binary>=2.9.10
 
 # Configuration
 python-dotenv==1.0.0
