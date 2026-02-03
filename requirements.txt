@@ -9,7 +9,7 @@ psycopg2-binary==2.9.9
 python-dotenv==1.0.0
 
 # Data validation
-pydantic==2.5.3
+pydantic>=2.7.4
 
 # Templates and HTTP
 jinja2==3.1.2
