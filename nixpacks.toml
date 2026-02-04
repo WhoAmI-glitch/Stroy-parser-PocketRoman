@@ -1,8 +1,6 @@
 [phases.setup]
-nixPkgs = ["python312", "postgresql"]
-
+nixPkgs = ["python312", "postgresql", "nodejs_20"]
 [phases.install]
-cmds = ["pip install -r requirements.txt"]
-
+cmds = ["npm install -g @anthropic-ai/brightdata-mcp", "pip install -r requirements.txt"]
 [start]
 cmd = "uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000}"
