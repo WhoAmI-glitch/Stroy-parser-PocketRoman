@@ -7,16 +7,11 @@ import time
 import json
 import re
 import logging
-import base64
-import hmac
-import hashlib
-import secrets
-from pathlib import Path
 from datetime import datetime
 from typing import Optional, List, Dict, Any
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException, Query, Request, UploadFile, File, Header, Body
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from fastapi.responses import HTMLResponse, JSONResponse
@@ -32,77 +27,6 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
-
-
-# ==================== AUTH UTILITIES ====================
-
-AUTH_SECRET = os.getenv("AUTH_SECRET", "change-me-in-prod")
-TOKEN_TTL_SECONDS = int(os.getenv("AUTH_TOKEN_TTL_SECONDS", "604800"))  # 7 days
-
-
-def hash_password(password: str) -> str:
-    salt = secrets.token_hex(16)
-    dk = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt.encode("utf-8"), 100_000)
-    digest = base64.b64encode(dk).decode("utf-8")
-    return f"pbkdf2_sha256$100000${salt}${digest}"
-
-
-def verify_password(password: str, stored: str) -> bool:
-    try:
-        algo, iterations, salt, digest = stored.split("$", 3)
-        if algo != "pbkdf2_sha256":
-            return False
-        dk = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt.encode("utf-8"), int(iterations))
-        expected = base64.b64encode(dk).decode("utf-8")
-        return hmac.compare_digest(expected, digest)
-    except Exception:
-        return False
-
-
-def create_token(user_id: int) -> str:
-    exp = int(time.time()) + TOKEN_TTL_SECONDS
-    payload = f"{user_id}.{exp}"
-    sig = hmac.new(AUTH_SECRET.encode("utf-8"), payload.encode("utf-8"), hashlib.sha256).hexdigest()
-    token = base64.urlsafe_b64encode(f"{payload}.{sig}".encode("utf-8")).decode("utf-8")
-    return token
-
-
-def verify_token(token: str) -> Optional[int]:
-    try:
-        raw = base64.urlsafe_b64decode(token.encode("utf-8")).decode("utf-8")
-        user_id_str, exp_str, sig = raw.split(".", 2)
-        payload = f"{user_id_str}.{exp_str}"
-        expected = hmac.new(AUTH_SECRET.encode("utf-8"), payload.encode("utf-8"), hashlib.sha256).hexdigest()
-        if not hmac.compare_digest(expected, sig):
-            return None
-        if int(exp_str) < int(time.time()):
-            return None
-        return int(user_id_str)
-    except Exception:
-        return None
-
-
-def sanitize_user(user: Dict[str, Any]) -> Dict[str, Any]:
-    return {
-        "id": user.get("id"),
-        "first_name": user.get("first_name"),
-        "last_name": user.get("last_name"),
-        "email": user.get("email") or user.get("username"),
-        "role": user.get("role", "user")
-    }
-
-
-def get_current_user(authorization: Optional[str] = Header(None)) -> Dict[str, Any]:
-    if not authorization or not authorization.startswith("Bearer "):
-        raise HTTPException(status_code=401, detail="Not authenticated")
-    token = authorization.split(" ", 1)[1]
-    user_id = verify_token(token)
-    if not user_id:
-        raise HTTPException(status_code=401, detail="Invalid token")
-    user = db.get_user_by_id(user_id)
-    if not user:
-        raise HTTPException(status_code=401, detail="User not found")
-    return user
 
 
 # ==================== PYDANTIC MODELS ====================
@@ -158,27 +82,6 @@ class SearchResponse(BaseModel):
 class BulkCompaniesRequest(BaseModel):
     companies: List[CompanyCreate]
     search_id: Optional[int] = None
-
-
-class TelegramSendRequest(BaseModel):
-    companies: List[Dict[str, Any]]
-
-
-class AuthRegisterRequest(BaseModel):
-    first_name: str
-    last_name: str
-    email: str
-    password: str
-
-
-class AuthLoginRequest(BaseModel):
-    email: str
-    password: str
-
-
-class AuthChangePasswordRequest(BaseModel):
-    current_password: str
-    new_password: str
 
 
 # ==================== APP LIFECYCLE ====================
@@ -525,112 +428,6 @@ async def get_cities():
         raise HTTPException(status_code=500, detail=str(e))
 
 
-# ==================== ENRICHMENT ====================
-
-@app.post("/enrich")
-async def enrich_companies(inn_list: List[str] = Body(...)):
-    """
-    Enrich companies by INN list.
-    Returns companies already stored in DB for the provided INNs.
-    """
-    try:
-        companies = db.get_companies_by_inn_list(inn_list)
-        return {
-            "success": True,
-            "companies": companies,
-            "count": len(companies)
-        }
-    except Exception as e:
-        logger.error(f"Enrich error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-# ==================== FILE UPLOAD ====================
-
-@app.post("/upload-pricelist")
-async def upload_pricelist(file: UploadFile = File(...)):
-    """
-    Accepts a price list file and stores it on disk.
-    """
-    try:
-        uploads_dir = Path(os.getenv("UPLOADS_DIR", "uploads"))
-        uploads_dir.mkdir(parents=True, exist_ok=True)
-        safe_name = f"{int(time.time())}_{file.filename}"
-        save_path = uploads_dir / safe_name
-        contents = await file.read()
-        with open(save_path, "wb") as f:
-            f.write(contents)
-        return {
-            "success": True,
-            "filename": safe_name,
-            "size": len(contents)
-        }
-    except Exception as e:
-        logger.error(f"Upload error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-# ==================== AUTH ENDPOINTS ====================
-
-@app.post("/auth/register")
-async def auth_register(request: AuthRegisterRequest):
-    try:
-        existing = db.get_user_by_email(request.email)
-        if existing:
-            raise HTTPException(status_code=400, detail="User already exists")
-        password_hash = hash_password(request.password)
-        user_id = db.create_user(
-            first_name=request.first_name,
-            last_name=request.last_name,
-            email=request.email,
-            password_hash=password_hash
-        )
-        user = db.get_user_by_id(user_id)
-        return {"success": True, "user": sanitize_user(user)}
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Register error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.post("/auth/login")
-async def auth_login(request: AuthLoginRequest):
-    try:
-        user = db.get_user_by_email(request.email)
-        if not user or not verify_password(request.password, user["password_hash"]):
-            raise HTTPException(status_code=401, detail="Invalid credentials")
-        token = create_token(user["id"])
-        return {"success": True, "token": token, "user": sanitize_user(user)}
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Login error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.get("/auth/me")
-async def auth_me(authorization: Optional[str] = Header(None)):
-    user = get_current_user(authorization)
-    return sanitize_user(user)
-
-
-@app.post("/auth/change-password")
-async def auth_change_password(request: AuthChangePasswordRequest, authorization: Optional[str] = Header(None)):
-    user = get_current_user(authorization)
-    if not verify_password(request.current_password, user["password_hash"]):
-        raise HTTPException(status_code=400, detail="Current password is incorrect")
-    new_hash = hash_password(request.new_password)
-    db.update_user_password(user["id"], new_hash)
-    return {"success": True}
-
-
-@app.post("/auth/logout")
-async def auth_logout():
-    # Stateless tokens: nothing to invalidate server-side
-    return {"success": True}
-
-
 # ==================== WEBHOOK ENDPOINT (for n8n) ====================
 
 @app.post("/webhook/save-results")
@@ -688,110 +485,6 @@ async def webhook_save_results(request: Request):
     except Exception as e:
         logger.error(f"Webhook error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
-
-
-# ==================== TELEGRAM ENDPOINTS ====================
-
-@app.post("/api/telegram/send")
-async def send_to_telegram(request: TelegramSendRequest):
-    """Send selected companies to all authenticated Telegram users"""
-    import httpx
-
-    try:
-        # Get bot token from environment or config
-        bot_token = os.getenv('TELEGRAM_BOT_TOKEN', '8248564352:AAERNBeg07cM03Gtiif3k49tRw6verjCYZ8')
-
-        # Get all telegram users from database
-        all_users = db.get_all_telegram_users()
-
-        if not all_users:
-            return {
-                "success": False,
-                "error": "No authenticated Telegram users found. Users must login to bot first with /login command."
-            }
-
-        # Get all user IDs
-        all_user_ids = [user['telegram_id'] for user in all_users]
-
-        # Format message
-        companies_text = "*Новые компании из СтройПарсер*\n\n"
-
-        for i, company in enumerate(request.companies, 1):
-            companies_text += f"*{i}. {company.get('название_компании', 'N/A')}*\n"
-
-            if company.get('инн'):
-                companies_text += f"ИНН: `{company['инн']}`\n"
-            if company.get('город'):
-                companies_text += f"Город: {company['город']}\n"
-            if company.get('оборот'):
-                companies_text += f"Оборот: {formatNumber(company['оборот'])}\n"
-            if company.get('приоритет'):
-                companies_text += f"Приоритет: {company['приоритет']}\n"
-            if company.get('телефон'):
-                companies_text += f"Телефон: `{company['телефон']}`\n"
-            if company.get('email'):
-                companies_text += f"Email: `{company['email']}`\n"
-            if company.get('сайт'):
-                companies_text += f"Сайт: {company['сайт']}\n"
-
-            companies_text += "\n"
-
-        companies_text += f"_Отправлено: {datetime.now().strftime('%Y-%m-%d %H:%M')}_"
-
-        # Send to all users
-        success_count = 0
-        fail_count = 0
-
-        async with httpx.AsyncClient() as client:
-            for user_id in all_user_ids:
-                try:
-                    response = await client.post(
-                        f"https://api.telegram.org/bot{bot_token}/sendMessage",
-                        json={
-                            "chat_id": user_id,
-                            "text": companies_text,
-                            "parse_mode": "Markdown"
-                        },
-                        timeout=10.0
-                    )
-
-                    if response.status_code == 200:
-                        success_count += 1
-                        logger.info(f"Sent companies to Telegram user {user_id}")
-                    else:
-                        fail_count += 1
-                        logger.warning(f"Failed to send to {user_id}: {response.text}")
-
-                except Exception as e:
-                    fail_count += 1
-                    logger.error(f"Error sending to {user_id}: {e}")
-
-        return {
-            "success": True,
-            "message": f"Отправлено {success_count} пользователям",
-            "sent_to": success_count,
-            "failed": fail_count,
-            "total_companies": len(request.companies)
-        }
-
-    except Exception as e:
-        logger.error(f"Telegram send error: {e}")
-        import traceback
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-def formatNumber(num):
-    """Helper to format numbers"""
-    if num is None:
-        return '-'
-    if num >= 1000000000:
-        return f"{num / 1000000000:.1f}B"
-    if num >= 1000000:
-        return f"{num / 1000000:.1f}M"
-    if num >= 1000:
-        return f"{num / 1000:.1f}K"
-    return str(num)
 
 
 # ==================== EXPORT ENDPOINTS ====================
