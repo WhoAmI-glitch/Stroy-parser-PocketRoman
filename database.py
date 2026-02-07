@@ -164,7 +164,24 @@ def create_tables():
                     created_at TIMESTAMPTZ DEFAULT NOW()
                 )
             """)
-            
+            # Ensure columns for UI auth flow exist (non-destructive)
+            cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS first_name TEXT")
+            cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS last_name TEXT")
+            cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS email TEXT")
+            cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email ON users(email)")
+
+            # Telegram users table
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS telegram_users (
+                    telegram_id BIGINT PRIMARY KEY,
+                    username TEXT,
+                    is_admin BOOLEAN DEFAULT FALSE,
+                    authenticated_at TIMESTAMPTZ DEFAULT NOW(),
+                    message_count INTEGER DEFAULT 0,
+                    last_active TIMESTAMPTZ DEFAULT NOW()
+                )
+            """)
+
             # Create indexes for performance
             cur.execute("CREATE INDEX IF NOT EXISTS idx_companies_city ON companies(город)")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_companies_inn ON companies(инн)")
@@ -291,6 +308,57 @@ def delete_company(company_id: int) -> bool:
             return cur.rowcount > 0
 
 
+# ==================== USER OPERATIONS ====================
+
+def create_user(first_name: str, last_name: str, email: str, password_hash: str, role: str = "user") -> int:
+    """Create a new user and return ID"""
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO users (username, password_hash, role, first_name, last_name, email)
+                VALUES (%s, %s, %s, %s, %s, %s)
+                RETURNING id
+            """, (email, password_hash, role, first_name, last_name, email))
+            return cur.fetchone()["id"]
+
+
+def get_user_by_email(email: str) -> Optional[Dict[str, Any]]:
+    """Get user by email"""
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT * FROM users WHERE email = %s OR username = %s", (email, email))
+            return cur.fetchone()
+
+
+def get_user_by_id(user_id: int) -> Optional[Dict[str, Any]]:
+    """Get user by id"""
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT * FROM users WHERE id = %s", (user_id,))
+            return cur.fetchone()
+
+
+def update_user_password(user_id: int, password_hash: str) -> None:
+    """Update user password hash"""
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("UPDATE users SET password_hash = %s WHERE id = %s", (password_hash, user_id))
+
+
+def get_companies_by_inn_list(inn_list: List[str]) -> List[Dict]:
+    """Get companies by INN list"""
+    if not inn_list:
+        return []
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT * FROM companies
+                WHERE инн = ANY(%s)
+                ORDER BY дата_парсинга DESC
+            """, (inn_list,))
+            return cur.fetchall()
+
+
 # ==================== SEARCH OPERATIONS ====================
 
 def create_search(query: str, city: Optional[str] = None, ring: Optional[int] = None, session_id: Optional[str] = None) -> int:
@@ -367,3 +435,75 @@ def upsert_city(name: str, ring: int, distance_km: int) -> int:
                 RETURNING id
             """, (name, ring, distance_km))
             return cur.fetchone()['id']
+
+
+# ==================== TELEGRAM USERS ====================
+
+def get_telegram_user(telegram_id: int) -> Optional[Dict]:
+    """Get telegram user by ID"""
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT * FROM telegram_users WHERE telegram_id = %s", (telegram_id,))
+            return cur.fetchone()
+
+
+def is_telegram_user_authenticated(telegram_id: int) -> bool:
+    """Check if telegram user is authenticated"""
+    return get_telegram_user(telegram_id) is not None
+
+
+def add_telegram_user(telegram_id: int, username: str = None, is_admin: bool = False):
+    """Add or update telegram user"""
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO telegram_users (telegram_id, username, is_admin, authenticated_at, last_active)
+                VALUES (%s, %s, %s, NOW(), NOW())
+                ON CONFLICT (telegram_id) DO UPDATE SET
+                    username = EXCLUDED.username,
+                    last_active = NOW()
+            """, (telegram_id, username, is_admin))
+
+
+def remove_telegram_user(telegram_id: int) -> bool:
+    """Remove telegram user"""
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM telegram_users WHERE telegram_id = %s", (telegram_id,))
+            return cur.rowcount > 0
+
+
+def get_all_telegram_users() -> List[Dict]:
+    """Get all authenticated telegram users"""
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT * FROM telegram_users ORDER BY authenticated_at DESC")
+            return cur.fetchall()
+
+
+def get_telegram_admins() -> List[int]:
+    """Get list of admin telegram IDs"""
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT telegram_id FROM telegram_users WHERE is_admin = TRUE")
+            return [row['telegram_id'] for row in cur.fetchall()]
+
+
+def is_telegram_admin(telegram_id: int) -> bool:
+    """Check if telegram user is admin"""
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT is_admin FROM telegram_users WHERE telegram_id = %s", (telegram_id,))
+            result = cur.fetchone()
+            return result and result['is_admin']
+
+
+def increment_telegram_message_count(telegram_id: int):
+    """Increment message count for telegram user"""
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                UPDATE telegram_users
+                SET message_count = message_count + 1, last_active = NOW()
+                WHERE telegram_id = %s
+            """, (telegram_id,))
