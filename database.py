@@ -84,7 +84,6 @@ def create_tables():
 
             # Companies table
             cur.execute("""
-                CREATE TABLE IF NOT EXISTS companies (
                 CREATE TABLE companies (
                     id SERIAL PRIMARY KEY,
                     название_компании TEXT,
@@ -107,10 +106,9 @@ def create_tables():
                     updated_at TIMESTAMPTZ DEFAULT NOW()
                 )
             """)
-
+            
             # Searches table for tracking search history
             cur.execute("""
-                CREATE TABLE IF NOT EXISTS searches (
                 CREATE TABLE searches (
                     id SERIAL PRIMARY KEY,
                     query TEXT NOT NULL,
@@ -123,10 +121,9 @@ def create_tables():
                     session_id TEXT
                 )
             """)
-
+            
             # Search results linking table
             cur.execute("""
-                CREATE TABLE IF NOT EXISTS search_results (
                 CREATE TABLE search_results (
                     search_id INTEGER REFERENCES searches(id) ON DELETE CASCADE,
                     company_id INTEGER REFERENCES companies(id) ON DELETE CASCADE,
@@ -134,10 +131,9 @@ def create_tables():
                     PRIMARY KEY (search_id, company_id)
                 )
             """)
-
+            
             # Cities table
             cur.execute("""
-                CREATE TABLE IF NOT EXISTS cities (
                 CREATE TABLE cities (
                     id SERIAL PRIMARY KEY,
                     name TEXT UNIQUE NOT NULL,
@@ -145,10 +141,9 @@ def create_tables():
                     distance_km INTEGER
                 )
             """)
-
+            
             # Scraping progress table
             cur.execute("""
-                CREATE TABLE IF NOT EXISTS scraping_progress (
                 CREATE TABLE scraping_progress (
                     id SERIAL PRIMARY KEY,
                     city TEXT,
@@ -158,10 +153,9 @@ def create_tables():
                     completed_at TIMESTAMPTZ
                 )
             """)
-
+            
             # Users table
             cur.execute("""
-                CREATE TABLE IF NOT EXISTS users (
                 CREATE TABLE users (
                     id SERIAL PRIMARY KEY,
                     username TEXT UNIQUE NOT NULL,
@@ -170,13 +164,13 @@ def create_tables():
                     created_at TIMESTAMPTZ DEFAULT NOW()
                 )
             """)
-
+            
             # Create indexes for performance
             cur.execute("CREATE INDEX IF NOT EXISTS idx_companies_city ON companies(город)")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_companies_inn ON companies(инн)")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_companies_ring ON companies(кольцо)")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_searches_created ON searches(created_at DESC)")
-
+            
             logger.info("Database tables created/verified")
 
 
@@ -241,7 +235,7 @@ def get_companies(
         with conn.cursor() as cur:
             conditions = []
             params = {'limit': limit, 'offset': offset}
-
+            
             if city:
                 conditions.append("город = %(city)s")
                 params['city'] = city
@@ -255,9 +249,9 @@ def get_companies(
                 conditions.append("email IS NOT NULL AND email != ''")
             if has_phone:
                 conditions.append("телефон IS NOT NULL AND телефон != ''")
-
+            
             where_clause = "WHERE " + " AND ".join(conditions) if conditions else ""
-
+            
             cur.execute(f"""
                 SELECT * FROM companies
                 {where_clause}
