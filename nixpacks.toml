@@ -6,13 +6,16 @@ cmds = [
   "export PATH=/app/.npm-global/bin:$PATH",
   "npm install -g @anthropic-ai/brightdata-mcp",
   "chmod +x /app/.npm-global/bin/brightdata-mcp || true",
+  "ln -sf $(which node) /app/.npm-global/bin/node || true",
+  "ln -sf $(which npx) /app/.npm-global/bin/npx || true",
   "node -v",
   "npm -v",
-  "ls -l /app/.npm-global/bin/brightdata-mcp",
+  "ls -la /app/.npm-global/bin/",
   "pip install -r requirements.txt"
 ]
 [start]
-cmd = "PATH=/app/.npm-global/bin:$PATH uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000}"
+cmd = "uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000}"
 
 [variables]
 NPM_CONFIG_PREFIX = "/app/.npm-global"
+PATH = "/app/.npm-global/bin:/usr/local/bin:/usr/bin:/bin"
