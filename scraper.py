@@ -8,6 +8,8 @@ import os
 import pickle
 import re
 import sys
+import shlex
+import shutil
 from dataclasses import dataclass, asdict, field
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -555,15 +557,33 @@ async def scrape_companies(query: str, max_results: int = 10, enrich: bool = Tru
         max_retries=3,
     )
 
+    # Prefer a globally installed Bright Data MCP binary when available.
+    # Fallback to npx with a pinned package name. Allow overrides via env.
+    mcp_command = os.getenv("MCP_COMMAND", "").strip()
+    mcp_args_raw = os.getenv("MCP_ARGS", "").strip()
+    mcp_args: List[str] = shlex.split(mcp_args_raw) if mcp_args_raw else []
+
+    if not mcp_command:
+        if shutil.which("brightdata-mcp"):
+            mcp_command = "brightdata-mcp"
+        elif shutil.which("npx"):
+            mcp_command = "npx"
+            mcp_args = ["@anthropic-ai/brightdata-mcp"]
+        else:
+            raise FileNotFoundError(
+                "Bright Data MCP command not found. "
+                "Install Node.js + @anthropic-ai/brightdata-mcp or set MCP_COMMAND/MCP_ARGS."
+            )
+
     server_params = StdioServerParameters(
-        command="npx",
+        command=mcp_command,
         env={
             **os.environ,
             "API_TOKEN": API_TOKEN,
             "BROWSER_AUTH": BROWSER_AUTH or "",
             "WEB_UNLOCKER_ZONE": WEB_UNLOCKER_ZONE or "",
         },
-        args=["@brightdata/mcp"],
+        args=mcp_args,
     )
 
     logger.info(f"Starting search: {query}")
