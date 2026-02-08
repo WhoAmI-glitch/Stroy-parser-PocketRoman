@@ -9,6 +9,7 @@ import pickle
 import re
 import sys
 import shlex
+import glob as glob_module
 import shutil
 from dataclasses import dataclass, asdict, field
 from datetime import datetime, timedelta
@@ -565,54 +566,65 @@ async def scrape_companies(query: str, max_results: int = 10, enrich: bool = Tru
 
     server_candidates: List[StdioServerParameters] = []
 
+    # Ensure node from nix store is on PATH (Railway/nixpacks puts it
+    # under /nix/store/<hash>/bin/ which isn't in the default runtime PATH).
+    for node_bin in sorted(glob_module.glob("/nix/store/*/bin/node")):
+        nix_bin_dir = os.path.dirname(node_bin)
+        if nix_bin_dir not in os.environ.get("PATH", ""):
+            os.environ["PATH"] = nix_bin_dir + ":" + os.environ.get("PATH", "")
+            logger.info(f"Added nix bin to PATH: {nix_bin_dir}")
+        break
+
+    mcp_env = {
+        **os.environ,
+        "API_TOKEN": API_TOKEN,
+        "BROWSER_AUTH": BROWSER_AUTH or "",
+        "WEB_UNLOCKER_ZONE": WEB_UNLOCKER_ZONE or "",
+    }
+
     if mcp_command:
         server_candidates.append(StdioServerParameters(
-            command=mcp_command,
-            env={
-                **os.environ,
-                "API_TOKEN": API_TOKEN,
-                "BROWSER_AUTH": BROWSER_AUTH or "",
-                "WEB_UNLOCKER_ZONE": WEB_UNLOCKER_ZONE or "",
-            },
-            args=mcp_args,
+            command=mcp_command, env=mcp_env, args=mcp_args,
         ))
     else:
-        # Common locations for Railway + npm global prefix.
-        cmd_candidates = [
-            "brightdata-mcp",
+        # 1) Try direct binary (skip shutil.which — just try and catch errors)
+        for cand in [
             "/app/.npm-global/bin/brightdata-mcp",
+            "brightdata-mcp",
             "/usr/local/bin/brightdata-mcp",
-        ]
-        for cand in cmd_candidates:
-            if shutil.which(cand):
+        ]:
+            if shutil.which(cand) or os.path.isfile(cand):
                 server_candidates.append(StdioServerParameters(
-                    command=cand,
-                    env={
-                        **os.environ,
-                        "API_TOKEN": API_TOKEN,
-                        "BROWSER_AUTH": BROWSER_AUTH or "",
-                        "WEB_UNLOCKER_ZONE": WEB_UNLOCKER_ZONE or "",
-                    },
-                    args=[],
+                    command=cand, env=mcp_env, args=[],
                 ))
                 break
 
-        npx_candidates = ["npx", "/app/.npm-global/bin/npx", "/usr/local/bin/npx"]
-        for cand in npx_candidates:
+        # 2) Try running MCP module directly via node
+        mcp_module = "/app/.npm-global/lib/node_modules/@anthropic-ai/brightdata-mcp/dist/index.js"
+        node_path = shutil.which("node")
+        if node_path and os.path.isfile(mcp_module):
+            server_candidates.append(StdioServerParameters(
+                command=node_path, env=mcp_env, args=[mcp_module],
+            ))
+
+        # 3) Try npx as last resort
+        for cand in ["npx", "/app/.npm-global/bin/npx", "/usr/local/bin/npx"]:
             if shutil.which(cand):
                 server_candidates.append(StdioServerParameters(
-                    command=cand,
-                    env={
-                        **os.environ,
-                        "API_TOKEN": API_TOKEN,
-                        "BROWSER_AUTH": BROWSER_AUTH or "",
-                        "WEB_UNLOCKER_ZONE": WEB_UNLOCKER_ZONE or "",
-                    },
-                    args=["@anthropic-ai/brightdata-mcp"],
+                    command=cand, env=mcp_env, args=["@anthropic-ai/brightdata-mcp"],
                 ))
                 break
 
     if not server_candidates:
+        # Log diagnostic info to help debug
+        logger.error(f"PATH = {os.environ.get('PATH', '')}")
+        logger.error(f"node found: {shutil.which('node')}")
+        logger.error(f"npx found: {shutil.which('npx')}")
+        logger.error(f"/app/.npm-global/bin exists: {os.path.isdir('/app/.npm-global/bin')}")
+        if os.path.isdir("/app/.npm-global/bin"):
+            logger.error(f"/app/.npm-global/bin contents: {os.listdir('/app/.npm-global/bin')}")
+        nix_nodes = glob_module.glob("/nix/store/*/bin/node")
+        logger.error(f"node in nix store: {nix_nodes[:5]}")
         raise FileNotFoundError(
             "Bright Data MCP command not found. "
             "Install Node.js + @anthropic-ai/brightdata-mcp or set MCP_COMMAND/MCP_ARGS."
