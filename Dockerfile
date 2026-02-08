@@ -11,7 +11,7 @@ WORKDIR /app
 
 # Install Node dependencies (brightdata-mcp)
 COPY package.json .
-RUN npm install && ls -la node_modules/.bin/brightdata-mcp
+RUN npm install && ls -la node_modules/.bin/ && which node && node -v
 
 # Install Python dependencies
 COPY requirements.txt .

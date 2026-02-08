@@ -595,8 +595,8 @@ async def scrape_companies(query: str, max_results: int = 10, enrich: bool = Tru
         node_path = shutil.which("node")
         if node_path:
             for mcp_module in [
-                "/app/node_modules/@anthropic-ai/brightdata-mcp/dist/index.js",
-                "/app/.npm-global/lib/node_modules/@anthropic-ai/brightdata-mcp/dist/index.js",
+                "/app/node_modules/@brightdata/mcp/dist/index.js",
+                "/app/.npm-global/lib/node_modules/@brightdata/mcp/dist/index.js",
             ]:
                 if os.path.isfile(mcp_module):
                     server_candidates.append(StdioServerParameters(
@@ -608,7 +608,7 @@ async def scrape_companies(query: str, max_results: int = 10, enrich: bool = Tru
         npx_path = shutil.which("npx")
         if npx_path:
             server_candidates.append(StdioServerParameters(
-                command=npx_path, env=mcp_env, args=["@anthropic-ai/brightdata-mcp"],
+                command=npx_path, env=mcp_env, args=["@brightdata/mcp"],
             ))
 
     if not server_candidates:
@@ -620,7 +620,7 @@ async def scrape_companies(query: str, max_results: int = 10, enrich: bool = Tru
                 logger.error(f"  contents: {os.listdir(d)}")
         raise FileNotFoundError(
             "Bright Data MCP command not found. "
-            "Install Node.js + @anthropic-ai/brightdata-mcp or set MCP_COMMAND/MCP_ARGS."
+            "Install Node.js + @brightdata/mcp or set MCP_COMMAND/MCP_ARGS."
         )
 
     logger.info(f"Starting search: {query}")
@@ -670,5 +670,5 @@ async def scrape_companies(query: str, max_results: int = 10, enrich: bool = Tru
 
     raise FileNotFoundError(
         "Failed to start Bright Data MCP. "
-        "Check Node.js availability and ensure @anthropic-ai/brightdata-mcp is installed."
+        "Check Node.js availability and ensure @brightdata/mcp is installed."
     ) from last_error

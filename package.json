@@ -1,6 +1,6 @@
 {
   "private": true,
   "dependencies": {
-    "@anthropic-ai/brightdata-mcp": "latest"
+    "@brightdata/mcp": "latest"
   }
 }
