@@ -122,9 +122,18 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Static files and templates
-app.mount("/static", StaticFiles(directory="static"), name="static")
-templates = Jinja2Templates(directory="templates")
+# Static files and templates (use absolute paths for Railway)
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+STATIC_DIR = os.path.join(BASE_DIR, "static")
+TEMPLATES_DIR = os.path.join(BASE_DIR, "templates")
+
+if not os.path.isdir(STATIC_DIR):
+    logger.warning(f"Static directory not found: {STATIC_DIR}")
+if not os.path.isdir(TEMPLATES_DIR):
+    logger.warning(f"Templates directory not found: {TEMPLATES_DIR}")
+
+app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+templates = Jinja2Templates(directory=TEMPLATES_DIR)
 
 
 def seed_default_cities():
