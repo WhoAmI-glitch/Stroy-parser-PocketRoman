@@ -564,12 +564,26 @@ async def scrape_companies(query: str, max_results: int = 10, enrich: bool = Tru
     mcp_args: List[str] = shlex.split(mcp_args_raw) if mcp_args_raw else []
 
     if not mcp_command:
-        if shutil.which("brightdata-mcp"):
-            mcp_command = "brightdata-mcp"
-        elif shutil.which("npx"):
-            mcp_command = "npx"
-            mcp_args = ["@anthropic-ai/brightdata-mcp"]
-        else:
+        # Common locations for Railway + npm global prefix.
+        candidates = [
+            "brightdata-mcp",
+            "/app/.npm-global/bin/brightdata-mcp",
+            "/usr/local/bin/brightdata-mcp",
+        ]
+        for cand in candidates:
+            if shutil.which(cand):
+                mcp_command = cand
+                break
+
+        if not mcp_command:
+            npx_candidates = ["npx", "/app/.npm-global/bin/npx", "/usr/local/bin/npx"]
+            for cand in npx_candidates:
+                if shutil.which(cand):
+                    mcp_command = cand
+                    mcp_args = ["@anthropic-ai/brightdata-mcp"]
+                    break
+
+        if not mcp_command:
             raise FileNotFoundError(
                 "Bright Data MCP command not found. "
                 "Install Node.js + @anthropic-ai/brightdata-mcp or set MCP_COMMAND/MCP_ARGS."
@@ -587,6 +601,7 @@ async def scrape_companies(query: str, max_results: int = 10, enrich: bool = Tru
     )
 
     logger.info(f"Starting search: {query}")
+    logger.info(f"Using MCP command: {mcp_command} {mcp_args}")
 
     async with stdio_client(server_params) as (read, write):
         async with ClientSession(read, write) as session:
