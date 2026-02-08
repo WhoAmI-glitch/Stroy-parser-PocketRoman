@@ -563,77 +563,107 @@ async def scrape_companies(query: str, max_results: int = 10, enrich: bool = Tru
     mcp_args_raw = os.getenv("MCP_ARGS", "").strip()
     mcp_args: List[str] = shlex.split(mcp_args_raw) if mcp_args_raw else []
 
-    if not mcp_command:
+    server_candidates: List[StdioServerParameters] = []
+
+    if mcp_command:
+        server_candidates.append(StdioServerParameters(
+            command=mcp_command,
+            env={
+                **os.environ,
+                "API_TOKEN": API_TOKEN,
+                "BROWSER_AUTH": BROWSER_AUTH or "",
+                "WEB_UNLOCKER_ZONE": WEB_UNLOCKER_ZONE or "",
+            },
+            args=mcp_args,
+        ))
+    else:
         # Common locations for Railway + npm global prefix.
-        candidates = [
+        cmd_candidates = [
             "brightdata-mcp",
             "/app/.npm-global/bin/brightdata-mcp",
             "/usr/local/bin/brightdata-mcp",
         ]
-        for cand in candidates:
+        for cand in cmd_candidates:
             if shutil.which(cand):
-                mcp_command = cand
+                server_candidates.append(StdioServerParameters(
+                    command=cand,
+                    env={
+                        **os.environ,
+                        "API_TOKEN": API_TOKEN,
+                        "BROWSER_AUTH": BROWSER_AUTH or "",
+                        "WEB_UNLOCKER_ZONE": WEB_UNLOCKER_ZONE or "",
+                    },
+                    args=[],
+                ))
                 break
 
-        if not mcp_command:
-            npx_candidates = ["npx", "/app/.npm-global/bin/npx", "/usr/local/bin/npx"]
-            for cand in npx_candidates:
-                if shutil.which(cand):
-                    mcp_command = cand
-                    mcp_args = ["@anthropic-ai/brightdata-mcp"]
-                    break
+        npx_candidates = ["npx", "/app/.npm-global/bin/npx", "/usr/local/bin/npx"]
+        for cand in npx_candidates:
+            if shutil.which(cand):
+                server_candidates.append(StdioServerParameters(
+                    command=cand,
+                    env={
+                        **os.environ,
+                        "API_TOKEN": API_TOKEN,
+                        "BROWSER_AUTH": BROWSER_AUTH or "",
+                        "WEB_UNLOCKER_ZONE": WEB_UNLOCKER_ZONE or "",
+                    },
+                    args=["@anthropic-ai/brightdata-mcp"],
+                ))
+                break
 
-        if not mcp_command:
-            raise FileNotFoundError(
-                "Bright Data MCP command not found. "
-                "Install Node.js + @anthropic-ai/brightdata-mcp or set MCP_COMMAND/MCP_ARGS."
-            )
-
-    server_params = StdioServerParameters(
-        command=mcp_command,
-        env={
-            **os.environ,
-            "API_TOKEN": API_TOKEN,
-            "BROWSER_AUTH": BROWSER_AUTH or "",
-            "WEB_UNLOCKER_ZONE": WEB_UNLOCKER_ZONE or "",
-        },
-        args=mcp_args,
-    )
+    if not server_candidates:
+        raise FileNotFoundError(
+            "Bright Data MCP command not found. "
+            "Install Node.js + @anthropic-ai/brightdata-mcp or set MCP_COMMAND/MCP_ARGS."
+        )
 
     logger.info(f"Starting search: {query}")
-    logger.info(f"Using MCP command: {mcp_command} {mcp_args}")
 
-    async with stdio_client(server_params) as (read, write):
-        async with ClientSession(read, write) as session:
-            await session.initialize()
-            tools = await load_mcp_tools(session)
-            agent = create_react_agent(model, tools)
+    last_error: Optional[Exception] = None
+    for params in server_candidates:
+        logger.info(f"Using MCP command: {params.command} {params.args}")
+        try:
+            async with stdio_client(params) as (read, write):
+                async with ClientSession(read, write) as session:
+                    await session.initialize()
+                    tools = await load_mcp_tools(session)
+                    agent = create_react_agent(model, tools)
 
-            messages = [
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": query}
-            ]
+                    messages = [
+                        {"role": "system", "content": SYSTEM_PROMPT},
+                        {"role": "user", "content": query}
+                    ]
 
-            logger.info("Agent is searching...")
-            agent_response = await agent.ainvoke({"messages": messages})
-            ai_message = agent_response["messages"][-1].content
+                    logger.info("Agent is searching...")
+                    agent_response = await agent.ainvoke({"messages": messages})
+                    ai_message = agent_response["messages"][-1].content
 
-            logger.info("Agent response received")
+                    logger.info("Agent response received")
 
-            # Extract companies from response
-            companies = agent_handler.extract_companies_from_response(ai_message)
+                    # Extract companies from response
+                    companies = agent_handler.extract_companies_from_response(ai_message)
 
-            if not companies:
-                logger.warning("No companies with valid INNs found in agent response")
-                return []
+                    if not companies:
+                        logger.warning("No companies with valid INNs found in agent response")
+                        return []
 
-            # Limit results
-            companies = companies[:max_results]
-            logger.info(f"Agent found {len(companies)} companies with INNs")
+                    # Limit results
+                    companies = companies[:max_results]
+                    logger.info(f"Agent found {len(companies)} companies with INNs")
 
-            # Enrich with Rusprofile if requested
-            if enrich:
-                enriched = agent_handler.enrich_with_rusprofile(companies)
-                return enriched
-            else:
-                return companies
+                    # Enrich with Rusprofile if requested
+                    if enrich:
+                        enriched = agent_handler.enrich_with_rusprofile(companies)
+                        return enriched
+                    else:
+                        return companies
+        except FileNotFoundError as e:
+            last_error = e
+            logger.error(f"MCP launch failed for {params.command}: {e}")
+            continue
+
+    raise FileNotFoundError(
+        "Failed to start Bright Data MCP. "
+        "Check Node.js availability and ensure @anthropic-ai/brightdata-mcp is installed."
+    ) from last_error
