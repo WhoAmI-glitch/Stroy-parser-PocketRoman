@@ -3,7 +3,12 @@ nixPkgs = ["python312", "postgresql", "nodejs_20"]
 [phases.install]
 cmds = [
   "npm config set prefix /app/.npm-global",
+  "export PATH=/app/.npm-global/bin:$PATH",
   "npm install -g @anthropic-ai/brightdata-mcp",
+  "chmod +x /app/.npm-global/bin/brightdata-mcp || true",
+  "node -v",
+  "npm -v",
+  "ls -l /app/.npm-global/bin/brightdata-mcp",
   "pip install -r requirements.txt"
 ]
 [start]
