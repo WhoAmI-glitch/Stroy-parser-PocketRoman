@@ -1,13 +1,11 @@
 [phases.setup]
-nixPkgs = ["python312", "postgresql", "nodejs_20"]
+nixPkgs = ["postgresql"]
+
 [phases.install]
 cmds = [
-  "export PATH=/app/.npm-global/bin:$PATH && npm config set prefix /app/.npm-global && npm install -g @anthropic-ai/brightdata-mcp && chmod +x /app/.npm-global/bin/brightdata-mcp || true && echo '--- node location ---' && which node && node -v && echo '--- creating symlinks ---' && ln -sf $(which node) /app/.npm-global/bin/node && ln -sf $(which npx) /app/.npm-global/bin/npx && echo '--- npm-global/bin contents ---' && ls -la /app/.npm-global/bin/",
-  "pip install -r requirements.txt"
+  "pip install -r requirements.txt",
+  "npm install"
 ]
+
 [start]
 cmd = "uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000}"
-
-[variables]
-NPM_CONFIG_PREFIX = "/app/.npm-global"
-PATH = "/app/.npm-global/bin:/usr/local/bin:/usr/bin:/bin"

@@ -566,15 +566,6 @@ async def scrape_companies(query: str, max_results: int = 10, enrich: bool = Tru
 
     server_candidates: List[StdioServerParameters] = []
 
-    # Ensure node from nix store is on PATH (Railway/nixpacks puts it
-    # under /nix/store/<hash>/bin/ which isn't in the default runtime PATH).
-    for node_bin in sorted(glob_module.glob("/nix/store/*/bin/node")):
-        nix_bin_dir = os.path.dirname(node_bin)
-        if nix_bin_dir not in os.environ.get("PATH", ""):
-            os.environ["PATH"] = nix_bin_dir + ":" + os.environ.get("PATH", "")
-            logger.info(f"Added nix bin to PATH: {nix_bin_dir}")
-        break
-
     mcp_env = {
         **os.environ,
         "API_TOKEN": API_TOKEN,
@@ -587,11 +578,12 @@ async def scrape_companies(query: str, max_results: int = 10, enrich: bool = Tru
             command=mcp_command, env=mcp_env, args=mcp_args,
         ))
     else:
-        # 1) Try direct binary (skip shutil.which — just try and catch errors)
+        # Try all known locations for brightdata-mcp binary
         for cand in [
+            "/app/node_modules/.bin/brightdata-mcp",
+            "./node_modules/.bin/brightdata-mcp",
             "/app/.npm-global/bin/brightdata-mcp",
             "brightdata-mcp",
-            "/usr/local/bin/brightdata-mcp",
         ]:
             if shutil.which(cand) or os.path.isfile(cand):
                 server_candidates.append(StdioServerParameters(
@@ -599,32 +591,33 @@ async def scrape_companies(query: str, max_results: int = 10, enrich: bool = Tru
                 ))
                 break
 
-        # 2) Try running MCP module directly via node
-        mcp_module = "/app/.npm-global/lib/node_modules/@anthropic-ai/brightdata-mcp/dist/index.js"
+        # Try running MCP module directly via node
         node_path = shutil.which("node")
-        if node_path and os.path.isfile(mcp_module):
+        if node_path:
+            for mcp_module in [
+                "/app/node_modules/@anthropic-ai/brightdata-mcp/dist/index.js",
+                "/app/.npm-global/lib/node_modules/@anthropic-ai/brightdata-mcp/dist/index.js",
+            ]:
+                if os.path.isfile(mcp_module):
+                    server_candidates.append(StdioServerParameters(
+                        command=node_path, env=mcp_env, args=[mcp_module],
+                    ))
+                    break
+
+        # Try npx as last resort
+        npx_path = shutil.which("npx")
+        if npx_path:
             server_candidates.append(StdioServerParameters(
-                command=node_path, env=mcp_env, args=[mcp_module],
+                command=npx_path, env=mcp_env, args=["@anthropic-ai/brightdata-mcp"],
             ))
 
-        # 3) Try npx as last resort
-        for cand in ["npx", "/app/.npm-global/bin/npx", "/usr/local/bin/npx"]:
-            if shutil.which(cand):
-                server_candidates.append(StdioServerParameters(
-                    command=cand, env=mcp_env, args=["@anthropic-ai/brightdata-mcp"],
-                ))
-                break
-
     if not server_candidates:
-        # Log diagnostic info to help debug
         logger.error(f"PATH = {os.environ.get('PATH', '')}")
-        logger.error(f"node found: {shutil.which('node')}")
-        logger.error(f"npx found: {shutil.which('npx')}")
-        logger.error(f"/app/.npm-global/bin exists: {os.path.isdir('/app/.npm-global/bin')}")
-        if os.path.isdir("/app/.npm-global/bin"):
-            logger.error(f"/app/.npm-global/bin contents: {os.listdir('/app/.npm-global/bin')}")
-        nix_nodes = glob_module.glob("/nix/store/*/bin/node")
-        logger.error(f"node in nix store: {nix_nodes[:5]}")
+        logger.error(f"node: {shutil.which('node')}, npx: {shutil.which('npx')}")
+        for d in ["/app/node_modules/.bin", "/app/.npm-global/bin"]:
+            logger.error(f"{d} exists: {os.path.isdir(d)}")
+            if os.path.isdir(d):
+                logger.error(f"  contents: {os.listdir(d)}")
         raise FileNotFoundError(
             "Bright Data MCP command not found. "
             "Install Node.js + @anthropic-ai/brightdata-mcp or set MCP_COMMAND/MCP_ARGS."
